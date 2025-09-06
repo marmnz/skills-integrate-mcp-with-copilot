@@ -5,11 +5,14 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+from sqlalchemy import create_engine, Column, String
+from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.exc import IntegrityError
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +21,21 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+
+
+# SQLite database setup
+DB_PATH = os.path.join(Path(__file__).parent, "users.db")
+engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+Base = declarative_base()
+SessionLocal = sessionmaker(bind=engine)
+
+class User(Base):
+    __tablename__ = "users"
+    email = Column(String, primary_key=True, index=True)
+    password = Column(String, nullable=False)
+
+Base.metadata.create_all(bind=engine)
 
 # In-memory activity database
 activities = {
@@ -76,6 +94,37 @@ activities = {
         "participants": ["charlotte@mergington.edu", "henry@mergington.edu"]
     }
 }
+
+
+# Account creation endpoint
+@app.post("/register")
+def register(email: str = Form(...), password: str = Form(...)):
+    db = SessionLocal()
+    user = db.query(User).filter_by(email=email).first()
+    if user:
+        db.close()
+        raise HTTPException(status_code=400, detail="User already exists")
+    new_user = User(email=email, password=password)
+    db.add(new_user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        db.close()
+        raise HTTPException(status_code=400, detail="User already exists")
+    db.close()
+    return {"message": f"User {email} registered successfully"}
+
+
+# Login endpoint
+@app.post("/login")
+def login(email: str = Form(...), password: str = Form(...)):
+    db = SessionLocal()
+    user = db.query(User).filter_by(email=email).first()
+    db.close()
+    if not user or user.password != password:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return {"message": f"User {email} logged in successfully"}
 
 
 @app.get("/")
